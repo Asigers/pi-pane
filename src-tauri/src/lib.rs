@@ -2,7 +2,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::Stdio,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -12,7 +12,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, Command},
     sync::{oneshot, Mutex},
-    time::{timeout, Instant},
+    time::timeout,
 };
 use uuid::Uuid;
 
@@ -131,7 +131,10 @@ async fn start_pi(
             let _ = app_reader.emit("pi-event", record);
         }
         reader.pending.lock().await.clear(); // Dropping senders wakes pending RPC calls.
-        let _ = app_reader.emit("pi-exit", "Pi RPC 已退出");
+        let active = app_reader.state::<AppState>().active.lock().await;
+        if active.as_ref().map(|x| Arc::ptr_eq(x, &reader)).unwrap_or(false) {
+            let _ = app_reader.emit("pi-exit", "Pi RPC 已退出");
+        }
     });
 
     let app_err = app;
@@ -288,16 +291,19 @@ async fn list_sessions(cwd: String) -> Result<Vec<SessionInfo>, String> {
 #[tauri::command]
 async fn detect_pi() -> Result<String, String> {
     // Probe without opening a shell to execute arbitrary user-provided code.
-    let mut cmd = pi_command("pi")?;
-    // The RPC mode isn't suitable for version detection: use a separate command.
-    #[cfg(windows)] {
-        cmd = Command::new("cmd.exe");
+    // The RPC mode is not suitable for version detection.
+    #[cfg(windows)]
+    let mut cmd = {
+        let mut cmd = Command::new("cmd.exe");
         cmd.args(["/D", "/C", "pi", "--version"]);
-    }
-    #[cfg(not(windows))] {
-        cmd = Command::new("pi");
+        cmd
+    };
+    #[cfg(not(windows))]
+    let mut cmd = {
+        let mut cmd = Command::new("pi");
         cmd.arg("--version");
-    }
+        cmd
+    };
     let result = timeout(Duration::from_secs(6), cmd.output()).await
         .map_err(|_| "Pi 版本检测超时".to_string())?
         .map_err(|e| format!("未找到 Pi: {e}"))?;
