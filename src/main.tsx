@@ -1,4 +1,5 @@
 import {render} from "preact";
+import {memo} from "preact/compat";
 import {useEffect, useRef, useState} from "preact/hooks";
 import {invoke} from "@tauri-apps/api/core";
 import {listen, type UnlistenFn} from "@tauri-apps/api/event";
@@ -30,7 +31,7 @@ function Markdown({value}:{value:string}) {
     setTimeout(() => { if (button.isConnected) button.textContent = "复制代码"; }, 1000);
   }} dangerouslySetInnerHTML={{__html:html}}/>;
 }
-function EntryView({entry}:{entry: Entry}) {
+const EntryView = memo(function EntryView({entry}:{entry: Entry}) {
   if (entry.role === "tool") return <details class="tool">
     <summary><span class={"tool-dot " + (entry.status ?? "")}/><span>{entry.tool ?? "tool"}</span>
       <small>{entry.status === "running" ? "运行中" : entry.status === "error" ? "失败" : "完成"}</small></summary>
@@ -42,7 +43,7 @@ function EntryView({entry}:{entry: Entry}) {
     {entry.thinking && <details class="thinking"><summary>思考过程</summary><pre>{entry.thinking}</pre></details>}
     {entry.role === "assistant" ? <Markdown value={entry.text}/> : <div class="plain">{entry.text}</div>}
   </article>;
-}
+});
 
 function ExtensionDialog({request, onResolve}:{request:DialogRequest;
   onResolve:(data:Record<string,unknown>)=>void}) {
@@ -177,6 +178,11 @@ function App() {
     void invoke<string>("detect_pi").then(setPiVersion).catch(()=>{});
     return ()=>{disposed=true; subs.forEach(x=>x()); if(flushTimer.current) clearTimeout(flushTimer.current);};
   }, []);
+  useEffect(() => {
+    if (!uiDialog?.timeout) return;
+    const timer = setTimeout(() => setUiDialog(current => current?.id === uiDialog.id ? null : current), uiDialog.timeout);
+    return () => clearTimeout(timer);
+  }, [uiDialog]);
   useEffect(() => {
     if (!uiDialog && dialogQueue.length) {
       setUiDialog(dialogQueue[0]); setDialogQueue(prev=>prev.slice(1));
