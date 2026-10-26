@@ -1,6 +1,6 @@
 # Pi Pane — Windows 极简桌面客户端实现设计
 
-> 状态：**设计基线 v0.1（待实现）**  
+> 状态：**实现基线 v0.2（M0–M3 功能范围已写入代码，Windows 实机验收待完成）**  
 > 日期：2026-10-26  
 > 首发平台：Windows 10/11 x64  
 > 目标：**用本地 Pi 的全部可用 Agent 能力，提供尽量接近原生 TUI 的轻量 GUI，并解决 Markdown/代码复制的不便。**  
@@ -188,7 +188,7 @@ flowchart TD
 | `ctx.ui.custom()` 和自定义 Footer/Header/Editor | RPC 不支持原生 TUI 组件 | 不承诺像素级复刻；提示使用 TUI |
 | 终端特有键盘事件、TUI 主题变更 | RPC 不支持或退化 | 仅实现 Pi Pane 自身快捷键/主题 |
 
-**原生 TUI 回退**：提供“在终端打开当前会话”操作。为了防止同一会话被两个进程同时写入，先安全地停止 RPC，确认会话已保存，再从相同 cwd 使用已检测到的 Pi 可执行文件打开对应会话；失败则保留清晰的恢复指引，不能静默启动双实例写同一 JSONL。
+**原生 TUI 回退**：当前实现的“ TUI 回退”先安全停止 RPC，提示用户在原工作目录手动运行 `pi --continue`。目前**不自动拉起终端**；不能同时打开两个写入同一会话的 Pi 进程。
 
 ## 6. 性能设计与测量
 
@@ -220,30 +220,28 @@ flowchart TD
 - **协议防线**：命令响应关联、最大帧大小、限长 stderr、队列上限、UI 请求超时/取消、进程退出时 Promise 清理。
 - **默认不自动更新 Pi**：GUI 的版本更新不能修改用户的 Pi 包、模型或 Extensions。
 
-## 8. 目录规划（仅设计，尚未创建代码）
+## 8. 仓库实现目录（以当前代码为准）
 
 ```text
 pi-pane/
 ├─ README.md
 ├─ docs/
-│  └─ IMPLEMENTATION_DESIGN.md
-├─ src/                     # Preact 界面
-│  ├─ app/
-│  ├─ components/           # Message, ToolCard, Composer, StatusBar
-│  ├─ features/             # sessions, model, command palette
-│  ├─ rpc/                  # typed events, reducer
-│  └─ styles/
+│  ├─ IMPLEMENTATION_DESIGN.md
+│  ├─ STATUS.md
+│  └─ WINDOWS.md
+├─ src/
+│  ├─ main.tsx              # 聊天 UI / 模型 / 会话 / 扩展确认
+│  ├─ protocol.ts           # RPC 事件 reducer / 内置命令
+│  ├─ protocol.test.ts      # 流式 / 工具 / 命令测试
+│  ├─ markdown.ts           # 安全 Markdown、代码复制
+│  └─ style.css             # 单主题
 ├─ src-tauri/
-│  ├─ src/
-│  │  ├─ main.rs
-│  │  ├─ process.rs         # Windows Pi 进程启动/退出
-│  │  ├─ protocol.rs        # JSONL framing & request ids
-│  │  ├─ bridge.rs          # Tauri IPC, event batching
-│  │  └─ sessions.rs        # 只读会话索引（P1）
-│  ├─ capabilities/         # Tauri 最小权限配置
+│  ├─ src/lib.rs            # Pi 子进程 / JSONL / Tauri commands
+│  ├─ src/main.rs
+│  ├─ capabilities/default.json
 │  └─ tauri.conf.json
-├─ tests/                   # RPC fixtures / Windows smoke
-└─ .github/workflows/       # Windows CI 构建与检查
+├─ scripts/measure.ps1      # Windows 占用测量
+└─ .github/workflows/windows.yml
 ```
 
 ## 9. 开发里程碑与验收
@@ -311,7 +309,14 @@ pi-pane/
 | 日期 | 版本 | 修改 |
 | --- | --- | --- |
 | 2026-10-26 | v0.1 | 建立 Windows 极简 GUI 的设计基线、技术栈、RPC 边界、功能阶段与性能预算 |
+| 2026-10-26 | v0.2 | M0–M3 功能代码、Windows 工作流、验证状态与实现目录同步；未通过实机测量前不宣称 M3 最终验收 |
 
 ---
 
 **资料来源**：[Pi RPC](https://pi.dev/docs/latest/rpc) · [Pi RPC Commands](https://pi.dev/docs/latest/rpc-commands) · [Pi RPC Extension UI](https://pi.dev/docs/latest/rpc-extension-ui) · [Pi JSON events](https://pi.dev/docs/latest/json) · [Pi CLI](https://pi.dev/docs/latest/cli) · [Tauri Windows prerequisites](https://v2.tauri.app/start/prerequisites/) · [Tauri Windows installer](https://v2.tauri.app/distribute/windows-installer/)
+
+## 13. 当前工程化验证
+
+- 自动化 CI：见 [Windows Actions](https://github.com/Asigers/pi-pane/actions/workflows/windows.yml)。前端单测、类型检查与 Windows Rust 测试已在 2026-10-26 的工作流中执行；NSIS 打包及安装包可用性请以最新一次成功运行结果为准。
+- [M0–M3 详细验收状态](STATUS.md) 和 [Windows 使用说明](WINDOWS.md)。
+- 未提供签名的稳定 Releases，未完成用户 Windows 真实 Provider 的全链路操作与资源测量，**M3 最终验收保留**。
