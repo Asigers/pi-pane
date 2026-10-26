@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "icons": "tauri icon assets/icon.svg",
+    "frontend:dev": "vite",
     "dev": "npm run icons && tauri dev",
     "build": "tsc --noEmit && vite build",
     "build:windows": "npm run icons && tauri build --bundles nsis",
