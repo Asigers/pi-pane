@@ -4,7 +4,7 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     process::Stdio,
-    sync::Arc,
+    sync::{Arc, atomic::{AtomicBool, Ordering}},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -17,6 +17,7 @@ use tokio::{
 use uuid::Uuid;
 
 const MAX_FRAME: usize = 8 * 1024 * 1024;
+static WINDOW_CLOSING: AtomicBool = AtomicBool::new(false);
 
 #[derive(Default)]
 struct AppState {
@@ -315,6 +316,22 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if !WINDOW_CLOSING.swap(true, Ordering::SeqCst) {
+                    api.prevent_close();
+                    let app = window.app_handle().clone();
+                    let label = window.label().to_string();
+                    tauri::async_runtime::spawn(async move {
+                        let process = app.state::<AppState>().active.lock().await.take();
+                        if let Some(process) = process { stop_process(&process).await; }
+                        if let Some(window) = app.get_webview_window(&label) {
+                            let _ = window.close();
+                        }
+                    });
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             start_pi, stop_pi, rpc_command, extension_response, list_sessions, detect_pi,
         ])
