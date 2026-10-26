@@ -420,7 +420,8 @@ mod tests {
         cmd.current_dir(&home)
             .env("PI_CODING_AGENT_DIR", home.join("agent"))
             .env("PI_OFFLINE", "1")
-            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
+            // Forward stderr to CI logs if startup fails (no real user secrets in this isolated test).
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit())
             .kill_on_drop(true);
         let mut child = cmd.spawn().expect("Windows .cmd shim launch failed");
         let mut stdin = child.stdin.take().unwrap();
