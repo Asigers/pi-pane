@@ -1,7 +1,7 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     path::PathBuf,
     process::Stdio,
     sync::{Arc, atomic::{AtomicBool, Ordering}},
@@ -17,6 +17,8 @@ use tokio::{
 use uuid::Uuid;
 
 const MAX_FRAME: usize = 8 * 1024 * 1024;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 static WINDOW_CLOSING: AtomicBool = AtomicBool::new(false);
 
 #[derive(Default)]
@@ -28,6 +30,7 @@ struct PiProcess {
     stdin: Mutex<ChildStdin>,
     pending: Mutex<HashMap<String, oneshot::Sender<Value>>>,
     pid: u32,
+    diagnostics: Arc<Mutex<VecDeque<String>>>,
 }
 
 #[derive(Serialize)]
@@ -38,27 +41,34 @@ struct SessionInfo {
     modified_ms: u64,
 }
 
-fn pi_command(executable: &str) -> Result<Command, String> {
+// npm's Windows .cmd shim needs cmd.exe. Arguments MUST be in one /C
+// command string; do not append --continue as another cmd.exe argument.
+fn pi_command(executable: &str, resume_last: bool) -> Result<Command, String> {
     let executable = if executable.trim().is_empty() { "pi" } else { executable.trim() };
     #[cfg(windows)]
     {
-        // npm installs pi as a .cmd shim. Only the executable path passes
-        // through cmd; prompts and RPC commands NEVER go through the shell.
-        // Refuse cmd metacharacters rather than attempting escaping.
         if executable.chars().any(|c| "\"&|<>^%!\r\n".contains(c)) {
-            return Err("Pi 路径包含 Windows 命令解释器不支持的字符".into());
+            return Err("Pi 路径包含不安全的 Windows cmd 字符".into());
         }
-        if executable == "pi" || executable.to_ascii_lowercase().ends_with(".cmd")
+        if executable.eq_ignore_ascii_case("pi")
+            || executable.to_ascii_lowercase().ends_with(".cmd")
             || executable.to_ascii_lowercase().ends_with(".bat")
         {
-            let quoted = format!("\"{}\"", if executable == "pi" { "pi.cmd" } else { executable });
+            let shim = if executable.eq_ignore_ascii_case("pi") { "pi.cmd" } else { executable };
             let mut cmd = Command::new("cmd.exe");
-            cmd.args(["/D", "/S", "/C", &format!("\"{} --mode rpc\"", quoted)]);
+            let mode = if resume_last { "--mode rpc --continue" } else { "--mode rpc" };
+            // /S strips the outer pair of double quotes.
+            let script = format!("\"\"{}\" {}\"", shim, mode);
+            cmd.args(["/D", "/S", "/C", &script]);
+            cmd.creation_flags(CREATE_NO_WINDOW);
             return Ok(cmd);
         }
     }
     let mut cmd = Command::new(executable);
     cmd.args(["--mode", "rpc"]);
+    if resume_last { cmd.arg("--continue"); }
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
     Ok(cmd)
 }
 
@@ -76,12 +86,8 @@ async fn start_pi(
     let directory = ensure_directory(&cwd)?;
     let mut guard = state.active.lock().await;
     if let Some(process) = guard.take() { stop_process(&process).await; }
-    let mut cmd = pi_command(&executable)?;
+    let mut cmd = pi_command(&executable, resume_last)?;
     cmd.current_dir(directory).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    if resume_last {
-        // --continue keeps Pi's own session manager as the source of truth.
-        cmd.arg("--continue");
-    }
     cmd.kill_on_drop(true);
     let mut child = cmd.spawn().map_err(|e| format!("无法启动本地 Pi: {e}"))?;
     let pid = child.id().unwrap_or_default();
@@ -91,6 +97,7 @@ async fn start_pi(
     let process = Arc::new(PiProcess {
         child: Mutex::new(child), stdin: Mutex::new(stdin),
         pending: Mutex::new(HashMap::new()), pid,
+        diagnostics: Arc::new(Mutex::new(VecDeque::with_capacity(8))),
     });
     *guard = Some(process.clone());
     drop(guard);
@@ -140,6 +147,7 @@ async fn start_pi(
     });
 
     let app_err = app;
+    let diagnostic_process = process.clone();
     tauri::async_runtime::spawn(async move {
         let mut lines = BufReader::new(stderr).lines();
         let mut remaining = 50usize;
@@ -147,8 +155,13 @@ async fn start_pi(
             match lines.next_line().await {
                 Ok(Some(line)) => {
                     remaining -= 1;
-                    // stderr may contain credentials/prompt fragments: never persist it.
-                    let _ = app_err.emit("pi-diagnostic", line.chars().take(500).collect::<String>());
+                    // In-memory ring only; no diagnostics are persisted.
+                    let short: String = line.chars().take(350).collect();
+                    let mut recent = diagnostic_process.diagnostics.lock().await;
+                    if recent.len() == 8 { recent.pop_front(); }
+                    recent.push_back(short.clone());
+                    drop(recent);
+                    let _ = app_err.emit("pi-diagnostic", short);
                 }
                 _ => break,
             }
@@ -156,7 +169,32 @@ async fn start_pi(
         // Drain stderr even after reaching display cap so child never blocks.
         while let Ok(Some(_)) = lines.next_line().await {}
     });
-    Ok(())
+    // Spawn alone is not proof that Pi RPC is alive.
+    match rpc_on_process(&process, json!({"type":"get_state"}), Duration::from_secs(20)).await {
+        Ok(state_value) if state_value.is_object() => Ok(()),
+        Ok(_) => {
+            if app_state_is_active(&state, &process).await { state.active.lock().await.take(); }
+            stop_process(&process).await;
+            Err("Pi RPC 返回无效 get_state 响应".into())
+        },
+        Err(error) => {
+            let diagnostics = process.diagnostics.lock().await.iter()
+                .filter(|line| !line.trim().is_empty())
+                .cloned().collect::<Vec<_>>().join("\n");
+            if app_state_is_active(&state, &process).await { state.active.lock().await.take(); }
+            stop_process(&process).await;
+            if diagnostics.is_empty() {
+                Err(format!("Pi RPC 启动失败：{error}。请确认在终端中 pi --mode rpc 可以运行"))
+            } else {
+                Err(format!("Pi RPC 启动失败：{error}\nPi 输出：\n{diagnostics}"))
+            }
+        }
+    }
+}
+
+async fn app_state_is_active(state: &State<'_, AppState>, process: &Arc<PiProcess>) -> bool {
+    state.active.lock().await.as_ref()
+        .map(|running| Arc::ptr_eq(running, process)).unwrap_or(false)
 }
 
 async fn stop_process(process: &Arc<PiProcess>) {
@@ -207,6 +245,10 @@ async fn rpc_command(state: State<'_, AppState>, payload: Value) -> Result<Value
     let command = payload["type"].as_str().ok_or("RPC 缺少 type")?;
     if !COMMANDS.contains(&command) { return Err(format!("不允许调用 RPC 命令: {command}")); }
     let process = state.active.lock().await.as_ref().cloned().ok_or("Pi 尚未连接")?;
+    rpc_on_process(&process, payload, Duration::from_secs(90)).await
+}
+
+async fn rpc_on_process(process: &Arc<PiProcess>, payload: Value, deadline: Duration) -> Result<Value, String> {
     let id = Uuid::new_v4().to_string();
     let mut data = payload.as_object().cloned().ok_or("RPC 必须是 JSON 对象")?;
     data.insert("id".into(), json!(id));
@@ -224,7 +266,7 @@ async fn rpc_command(state: State<'_, AppState>, payload: Value) -> Result<Value
         process.pending.lock().await.remove(&id);
         return Err(format!("RPC 发送失败: {e}"));
     }
-    match timeout(Duration::from_secs(90), rx).await {
+    match timeout(deadline, rx).await {
         Ok(Ok(response)) if response["success"] == true => Ok(response["data"].clone()),
         Ok(Ok(response)) => Err(response["error"].as_str().unwrap_or("RPC 请求失败").into()),
         Ok(Err(_)) => Err("Pi 已退出，RPC 请求中断".into()),
@@ -350,6 +392,12 @@ mod tests {
     }
     #[test]
     fn command_builds() {
-        assert!(pi_command("pi").is_ok());
+        assert!(pi_command("pi", true).is_ok());
+        assert!(pi_command("pi", false).is_ok());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn dangerous_cmd_path_rejected() {
+        assert!(pi_command(r"C:\test&bad\pi.cmd", false).is_err());
     }
 }
