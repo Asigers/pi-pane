@@ -214,6 +214,7 @@ async fn stop_process(process: &Arc<PiProcess>) {
             // Windows npm .cmd launches a Node descendant; kill the process tree.
             let _ = Command::new("taskkill")
                 .args(["/T", "/F", "/PID", &process.pid.to_string()])
+                .creation_flags(CREATE_NO_WINDOW)
                 .stdout(Stdio::null()).stderr(Stdio::null()).status().await;
         }
         let mut child = process.child.lock().await;
@@ -340,6 +341,7 @@ async fn detect_pi() -> Result<String, String> {
     let mut cmd = {
         let mut cmd = Command::new("cmd.exe");
         cmd.args(["/D", "/C", "pi", "--version"]);
+        cmd.creation_flags(CREATE_NO_WINDOW);
         cmd
     };
     #[cfg(not(windows))]
@@ -400,4 +402,43 @@ mod tests {
     fn dangerous_cmd_path_rejected() {
         assert!(pi_command(r"C:\test&bad\pi.cmd", false).is_err());
     }
+    // Regression: the packaged application uses the same launcher as this
+    // test, rather than a separate node.js smoke program with different
+    // cmd quoting. CI installs the same Pi CLI before running Rust tests.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_real_pi_cmd_rpc_continue() {
+        if std::env::var("PI_PANE_SMOKE_RPC").ok().as_deref() != Some("1") {
+            return;
+        }
+        let home = std::env::temp_dir().join(format!("pi-pane-rpc-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let mut cmd = pi_command("pi", true).unwrap();
+        cmd.current_dir(&home)
+            .env("PI_CODING_AGENT_DIR", home.join("agent"))
+            .env("PI_OFFLINE", "1")
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let mut child = cmd.spawn().expect("Windows .cmd shim launch failed");
+        let mut stdin = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+        stdin.write_all(b"{\"type\":\"get_state\",\"id\":\"windows-smoke\"}\n").await.unwrap();
+        stdin.flush().await.unwrap();
+        let mut lines = BufReader::new(stdout).lines();
+        let response = timeout(Duration::from_secs(45), async {
+            while let Some(line) = lines.next_line().await.expect("RPC read error") {
+                let value: Value = serde_json::from_str(&line).expect("non-JSON stdout");
+                if value["type"] == "response" && value["id"] == "windows-smoke" {
+                    return value;
+                }
+            }
+            panic!("RPC process closed stdout before handshake");
+        }).await.expect("RPC startup timed out");
+        assert_eq!(response["success"], true, "RPC response: {response}");
+        let _ = stdin.shutdown().await;
+        let _ = child.start_kill();
+        let _ = child.wait().await;
+        let _ = std::fs::remove_dir_all(home);
+    }
+
 }
