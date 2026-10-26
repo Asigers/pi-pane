@@ -17,7 +17,6 @@ markdown.renderer.rules.fence = (tokens, idx) => {
   const supported = hljs.getLanguage(language) != null;
   const code = supported ? hljs.highlight(raw, {language, ignoreIllegals:true}).value
     : markdown.utils.escapeHtml(raw);
-  const b64 = Array.from(new TextEncoder().encode(raw), byte => String.fromCharCode(byte)).join("");
   // Encode code separately; button uses visible <code> innerText, never evaluates HTML.
   return '<div class="code-block"><div class="code-head"><span>' +
     markdown.utils.escapeHtml(language || "text") +
