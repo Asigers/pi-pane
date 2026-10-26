@@ -4,10 +4,10 @@
 
 | 阶段 | 已实现的内容 | 自动化验证 | Windows 实机验收 |
 | --- | --- | --- | --- |
-| M0 | Tauri 2 / Preact / Rust 工程，Pi 路径与 cwd、RPC JSONL 桥接 | Windows CI 运行中 | 未完成 |
-| M1 | 发送、流式消息重建、Markdown、代码复制、工具记录、停止 | Vitest 协议 reducer 用例，Rust 编译待验证 | 未完成 |
-| M2 | 会话恢复、新会话、模型、思考等级、扩展 select/confirm/input/editor、工具状态、命令映射 | 基础单测，端到端未覆盖 | 未完成 |
-| M3 | CI、Windows NSIS 打包步骤、进程清理、资源测量脚本、安装文档 | Windows CI 运行中 | 未完成 |
+| M0 | Tauri 2 / Preact / Rust 工程，Pi 路径与 cwd、RPC JSONL 桥接 | 已通过 Windows CI 的 Rust/TypeScript 编译；真实 Pi 1.4.0 RPC get_state 冒烟通过 | 未完成 |
+| M1 | 发送、流式消息重建、Markdown、代码复制、工具记录、停止 | Vitest 协议 reducer 3 项测试与 Rust 编译通过；真实模型交互未测 | 未完成 |
+| M2 | 会话恢复、新会话、模型、思考等级、扩展 select/confirm/input/editor、工具状态、命令映射 | 构建及基础单测通过；会话、扩展端到端未覆盖 | 未完成 |
+| M3 | CI、Windows NSIS 打包、进程清理、资源测量脚本、安装文档 | Windows CI #23 成功，未签名 NSIS Artifact 已生成 | 未完成 |
 
 ## 有意不支持
 
@@ -35,3 +35,11 @@
 
 CI: https://github.com/Asigers/pi-pane/actions/workflows/windows.yml
 
+
+## 已验证的 Windows 自动化结果（2026-10-26）
+
+- [GitHub Actions #23：success](https://github.com/Asigers/pi-pane/actions/runs/40264008414)，对应代码提交 `c1b6a6b3`，包含最后一轮消息渲染性能优化。
+- 官方 Pi CLI `@earendil-works/pi-coding-agent@1.4.0` 在 Windows Runner 上以本地 RPC 运行，`get_state` JSONL 校验通过。
+- 前端 Vitest 3 项通过、TypeScript 类型检查通过、Rust 测试通过、Tauri Release 构建通过。
+- Artifact：`pi-pane-windows-x64-unsigned`（压缩包约 2.1 MB，未代码签名），由上方工作流页面下载。
+- **未验证**：真实 Windows 桌面打开交互、模型/工具完整任务、复杂扩展兼容性、Windows 10 覆盖、内存/CPU 实测。M3 实现范围已交付，但完整产品验收仍须 Windows 本机测试。
