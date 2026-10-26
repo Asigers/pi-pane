@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "top.yoleo.pi-pane",
   "build": {
-    "beforeDevCommand": "npm run build",
+    "beforeDevCommand": "npm run frontend:dev",
     "beforeBuildCommand": "npm run build",
     "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "../dist"
