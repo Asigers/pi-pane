@@ -70,7 +70,7 @@ export function applyEvent(entries: Entry[], event: JsonRecord): Entry[] {
     if (index < 0) list.push(entry);
     else list[index] = entry;
     // Finalize id so further messages don't overwrite earlier turns.
-    list[list.length - 1 === index ? index : index] = {...entry, id: "done-" + entry.id};
+    list[index >= 0 ? index : list.length - 1] = {...entry, id: "done-" + entry.id};
   }
   if (event.type === "tool_execution_start") {
     list.push({id: "tool-" + event.toolCallId, role: "tool", tool: event.toolName,
