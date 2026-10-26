@@ -26,6 +26,10 @@ jobs:
           workspaces: src-tauri
       - name: Install frontend dependencies
         run: npm install --no-audit --no-fund
+      - name: Install official Pi CLI for RPC smoke
+        run: npm install -g --ignore-scripts @earendil-works/pi-coding-agent@1.4.0
+      - name: Smoke test real Pi RPC on Windows
+        run: node tests/smoke-pi-rpc.mjs
       - name: Run frontend tests
         run: npm test
       - name: Check types
