@@ -59,7 +59,10 @@ fn pi_command(executable: &str, resume_last: bool) -> Result<Command, String> {
             let mode = if resume_last { "--mode rpc --continue" } else { "--mode rpc" };
             // /S strips the outer pair of double quotes.
             let script = format!("\"\"{}\" {}\"", shim, mode);
-            cmd.args(["/D", "/S", "/C", &script]);
+            // cmd.exe does not use CommandLineToArgvW quoting. Use raw_arg to
+            // preserve the paired quotes for paths containing spaces.
+            cmd.args(["/D", "/S", "/C"]);
+            cmd.raw_arg(script);
             cmd.creation_flags(CREATE_NO_WINDOW);
             return Ok(cmd);
         }
