@@ -58,3 +58,32 @@ pi --continue
 
 可运行 `powershell -ExecutionPolicy Bypass -File scripts/measure.ps1` 生成机器级 WebView2 + Pane 工作集数据。**此脚本可能包含其他 WebView2 应用，结果是粗略上界**；发布前需用 Process Explorer 识别 Pane 的 WebView2 子进程并重新归因。
 
+
+## Windows 启动后闪现终端，又回到工作目录页面（2026-10-26 修复）
+
+旧版存在三处启动缺陷：
+
+1. GUI 下使用 cmd.exe 运行 pi.cmd，没有设置 CREATE_NO_WINDOW，导致控制台闪现；
+2. cmd.exe 的 /C 命令行未把 --continue 保存在同一条命令字符串中，存在 Windows 引号与参数解析风险；
+3. 仅判断进程创建成功，不做 RPC get_state 握手；进程退出又回到工作目录页面，且诊断消息仅在聊天页显示。
+
+修复版的「打开 Pi」必须先通过本机 Pi 的 get_state 握手，才显示聊天界面。若启动失败，**工作目录选择页面下方会保留详细错误与复制错误按钮**，不会静默返回。检测 Pi 版本、启动 Pi 以及停止进程时均避免弹出新的控制台窗口。
+
+排查步骤（在 Windows CMD 或 PowerShell 中执行，避免粘贴任何 API Key）：
+
+```powershell
+where.exe pi
+pi --version
+pi --mode rpc --no-session
+```
+
+最后一条进入 RPC 模式后，终端会等待 JSONL 命令。可输入：
+
+```json
+{"id":"test","type":"get_state"}
+```
+
+出现 `success:true` 的 `response` 表示 CLI RPC 可以启动；然后按 Ctrl+C 退出测试。
+若 `where.exe pi` 无输出或程序不能正常启动，请在 Pi Pane 填写由 `where.exe pi` 找到的 `pi.cmd` 真实路径；不支持直接填写 PowerShell 的别名/函数名。
+
+当前回归测试：CI 在 Windows Runner 安装官方 `@earendil-works/pi-coding-agent@1.4.0`，不仅通过独立 Node RPC 冒烟，还用 **Pi Pane 实际 Rust cmd.exe 启动器** 执行 `--mode rpc --continue` 的握手测试。发布版还需确认对应工作流全部成功。
