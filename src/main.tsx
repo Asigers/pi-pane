@@ -289,6 +289,11 @@ function App() {
         <small>{piVersion ? "检测到 Pi: " + piVersion : "未自动检测到 Pi；可指定完整路径"}</small>
         <button class="primary full" disabled={working || !cwd.trim()} onClick={()=>void connect()}>
           {working ? "正在连接…" : "打开 Pi"}</button>
+        {notice && <div class="startup-error" role="alert">
+          <strong>连接失败</strong>
+          <pre>{notice}</pre>
+          <button type="button" onClick={()=>navigator.clipboard.writeText(notice)}>复制错误信息</button>
+        </div>}
       </div>
     </main> : <>
       <main class="conversation" ref={scrollRef} onScroll={e=>{
