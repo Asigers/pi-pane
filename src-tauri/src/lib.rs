@@ -132,7 +132,8 @@ async fn start_pi(
             let _ = app_reader.emit("pi-event", record);
         }
         reader.pending.lock().await.clear(); // Dropping senders wakes pending RPC calls.
-        let active = app_reader.state::<AppState>().active.lock().await;
+        let app_state = app_reader.state::<AppState>();
+        let active = app_state.active.lock().await;
         if active.as_ref().map(|x| Arc::ptr_eq(x, &reader)).unwrap_or(false) {
             let _ = app_reader.emit("pi-exit", "Pi RPC 已退出");
         }
@@ -323,7 +324,8 @@ pub fn run() {
                     let app = window.app_handle().clone();
                     let label = window.label().to_string();
                     tauri::async_runtime::spawn(async move {
-                        let process = app.state::<AppState>().active.lock().await.take();
+                        let app_state = app.state::<AppState>();
+                        let process = app_state.active.lock().await.take();
                         if let Some(process) = process { stop_process(&process).await; }
                         if let Some(window) = app.get_webview_window(&label) {
                             let _ = window.close();
